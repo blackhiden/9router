@@ -34,6 +34,20 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
+          
+          # Check if any version tags (v*) point to the current commit
+          CURRENT_TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]' || true)
+          if [ -n "$CURRENT_TAGS" ]; then
+            # Convert newline-separated tags to comma-separated for output
+            TAGS_CSV=$(echo "$CURRENT_TAGS" | tr '\n' ',' | sed 's/,$//')
+            echo "CURRENT_VERSION_TAGS=$TAGS_CSV" >> $GITHUB_OUTPUT
+            echo "HAS_VERSION_TAG=true" >> $GITHUB_OUTPUT
+            echo "Found version tags on current commit: $TAGS_CSV"
+          else
+            echo "CURRENT_VERSION_TAGS=" >> $GITHUB_OUTPUT
+            echo "HAS_VERSION_TAG=false" >> $GITHUB_OUTPUT
+            echo "No version tags found on current commit"
+          fi
 
       # QEMU is required to emulate the arm64 architecture on the x86 runner
       - name: Set up QEMU
@@ -51,18 +65,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 4: Extract metadata (tags, labels) from Git events
+      # Step 4: Generate dynamic tags list based on detected version tags
+      - name: Generate Docker tags list
+        id: tags
+        run: |
+          TAGS=""
+          
+          # Base tags for branch push
+          TAGS="${TAGS}type=ref,event=branch"$'\n'
+          TAGS="${TAGS}type=ref,event=tag"$'\n'
+          TAGS="${TAGS}type=sha,format=short"$'\n'
+          TAGS="${TAGS}type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}"
+          
+          # If version tags exist on this commit, add them as additional tags
+          if [ "${{ steps.git_meta.outputs.HAS_VERSION_TAG }}" = "true" ]; then
+            IFS=',' read -ra TAG_ARRAY <<< "${{ steps.git_meta.outputs.CURRENT_VERSION_TAGS }}"
+            for TAG in "${TAG_ARRAY[@]}"; do
+              # Add each version tag
+              TAGS="${TAGS}"$'\n'"type=raw,value=${TAG}"
+              # Also add without 'v' prefix if present (e.g., v1.0.0 -> 1.0.0)
+              if [[ "$TAG" =~ ^v([0-9].*)$ ]]; then
+                TAGS="${TAGS}"$'\n'"type=raw,value=${BASH_REMATCH[1]}"
+              fi
+            done
+          fi
+          
+          # Output the tags in a format compatible with metadata-action
+          echo "tags_list<<EOF" >> $GITHUB_OUTPUT
+          echo "$TAGS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+      # Step 5: Extract metadata (tags, labels) from Git events
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
-            type=semver,pattern={{version}}
+          tags: ${{ steps.tags.outputs.tags_list }}
 
       # Step 6: Build the Dockerfile and push it to GHCR
       - name: Build and push Docker image
