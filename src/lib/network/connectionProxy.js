@@ -188,7 +188,11 @@ export async function resolveConnectionProxyConfig(
       poolStrictProxy = proxyPool?.strictProxy === true;
 
       if (isValidPool) {
-        if (proxyPool.type === "vercel" || proxyPool.type === "cloudflare" || proxyPool.type === "deno") {
+        /**
+         * Vercel/Cloudflare/Deno/Netlify relay proxies use base URL rewriting
+         * instead of HTTP_PROXY environment variables.
+         */
+        if (proxyPool.type === "vercel" || proxyPool.type === "cloudflare" || proxyPool.type === "deno" || proxyPool.type === "netlify") {
           return {
             source: proxyPool.type,
             proxyPoolId: proxyPoolIdRaw,
