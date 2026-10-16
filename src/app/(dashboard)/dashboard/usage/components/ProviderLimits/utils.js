@@ -259,49 +259,6 @@ export function formatResetTime(date) {
 }
 
 /**
- * Freebucks account header line — mirrors upstream freebucksHeaderLine:
- * "10/25 Freebucks daily · resets in 4h 12m · 20 in wallet · $6.50 monthly usage left".
- * Wallet shown only when non-empty; monthly only when the server sent it
- * (older servers omit it — showing $0 would read as "nothing left").
- * @param {{balance: number|null, daily: {limit:number,spent:number,remaining:number,resetAt:string|null}, wallet:{balance:number}, monthly?:{remainingUsd:number,limitUsd:number|null,resetAt:string|null}}} freebucks
- * @returns {string|null}
- */
-export function formatFreebucksHeader(freebucks) {
-  if (!freebucks?.daily) return null;
-  const parts = [
-    `${Math.max(0, Math.round(freebucks.daily.remaining))}/${Math.max(0, Math.round(freebucks.daily.limit))} Freebucks daily`,
-  ];
-  const countdown = formatResetTime(freebucks.daily.resetAt);
-  if (countdown !== "-") parts.push(`resets in ${countdown}`);
-  if (Number(freebucks.wallet?.balance) > 0) {
-    parts.push(`${Math.max(0, Math.round(freebucks.wallet.balance))} in wallet`);
-  }
-  if (freebucks.monthly && Number.isFinite(Number(freebucks.monthly.remainingUsd))) {
-    parts.push(`${formatFreebucksUsd(freebucks.monthly.remainingUsd)} monthly usage left`);
-  }
-  return parts.join(" · ");
-}
-
-/**
- * "$25", "$4.20", "$0" — whole dollars until the figure is small enough that
- * the cents are the story. Mirrors upstream formatAllowanceUsd.
- */
-export function formatFreebucksUsd(usd) {
-  const safe = Math.max(0, Number(usd));
-  if (safe >= 10) return `$${Math.round(safe)}`;
-  if (safe >= 1) return `$${safe.toFixed(1).replace(/\.0$/, "")}`;
-  return `$${safe.toFixed(2)}`;
-}
-
-/**
- * "15 Freebucks/hr" — a bare number would read as dollars; the unit is the
- * hour, not the message.
- */
-export function formatFreebucksPrice(price) {
-  return `${Math.max(0, Math.round(Number(price) || 0))} Freebucks/hr`;
-}
-
-/**
  * Get Tailwind color class based on percentage
  * @param {number} percentage - Remaining percentage (0-100)
  * @returns {string} Color name: "green" | "yellow" | "red"
@@ -595,25 +552,42 @@ export function parseQuotaData(provider, data) {
 
       case "qoder":
       case "qoder-cn":
-        // Qoder ships a `user` quota and (optionally) an `organization`
-        // quota, both with same shape: {total, used, remaining, unit, resetAt}.
-        // Skip an organization bucket when its total is 0 — most personal
-        // Qoder accounts won't have one and rendering "0/0" is misleading.
+        // Qoder ships a `user` quota, an optional `organization` quota and —
+        // when the account has redeemed a free-credit promo — an `addOn`
+        // bucket. All share the shape {total, used, remaining, unit, resetAt}.
+        // Skip any bucket whose total is 0: `personal_standard` accounts
+        // report `user` as 0/0 (their grant lives in `addOn`) and most
+        // accounts never have an organization bucket, so rendering "0/0"
+        // rows is noise. Buckets holding an actual grant always have
+        // total > 0 and are kept.
         // Don't forward Qoder's `remaining` field: it's an absolute credit
         // count, but getRemainingPercentage / QuotaTable interpret
         // `remaining` as a 0-100 percentage and would render 348 credits
         // as "348%". The percentage is computed from used/total instead.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([quotaType, quota]) => {
-            if (quotaType === "organization" && (!quota || (Number(quota.total) || 0) === 0)) {
+            if (!quota || (Number(quota.total) || 0) === 0) {
               return;
             }
             normalizedQuotas.push({
-              name: quotaType === "user" ? "Personal" : quotaType === "organization" ? "Organization" : quotaType,
+              name:
+                quotaType === "user"
+                  ? "Personal"
+                  : quotaType === "organization"
+                    ? "Organization"
+                    : quotaType === "addOn"
+                      ? "Add-on"
+                      : quotaType,
               used: quota.used || 0,
               total: quota.total || 0,
               unit: quota.unit,
               resetAt: quota.resetAt || null,
+              // Qoder reports open-ended plans as a 9999 sentinel; the service
+              // turns that into neverExpires so the row can read
+              // "Never expires" instead of "N/A" or a year-9999 date.
+              neverExpires: quota.neverExpires === true,
+              // Present on add-on credits: links to Qoder's own usage page.
+              detailUrl: quota.detailUrl || null,
             });
           });
         }
@@ -729,22 +703,17 @@ export function parseQuotaData(provider, data) {
         }
         break;
 
-      case "freebuff":
-        // Session quotas keyed by model id — label rows with the friendly
-        // displayName (from the registry) and keep modelKey for ordering.
-        // Metered rows carry the live Freebucks price (price) + promo tagline
-        // (priceNote), both server-authoritative.
+      case "cursor":
+        // Plan spend is USD (cents from GetCurrentPeriodUsage). Forward
+        // remainingPercentage only — do not pass absolute remaining (UI treats it as %).
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([modelKey, quota]) => {
+          Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
-              name: quota.displayName || modelKey,
-              modelKey,
+              name,
               used: quota.used || 0,
               total: quota.total || 0,
               resetAt: quota.resetAt || null,
-              recurring: quota.recurring !== false,
-              price: quota.price,
-              priceNote: quota.priceNote,
+              remainingPercentage: quota.remainingPercentage,
             });
           });
         }
