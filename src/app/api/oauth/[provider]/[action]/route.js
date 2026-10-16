@@ -278,6 +278,8 @@ export async function GET(request, { params }) {
         "muse",
         "glm",
         "nous",
+        "minimax-code",
+        "minimax-code-global",
       ];
       let deviceData;
       if (noPkceDeviceProviders.includes(provider)) {
@@ -518,7 +520,7 @@ export async function POST(request, { params }) {
       // `proxy_pool`); keeps poll on the working egress too.
       const pollOptions = proxyPoolId ? { proxyPoolId } : undefined;
       // Providers that don't use PKCE for device code
-      const noPkceProviders = ["github", "kimi", "kimi-coding", "kilocode", "codebuddy-cn", "codebuddy-intl", "glm", "nous"];
+      const noPkceProviders = ["github", "kimi", "kimi-coding", "kilocode", "codebuddy-cn", "codebuddy-intl", "glm", "minimax-code", "minimax-code-global", "nous"];
       let result;
       if (noPkceProviders.includes(provider)) {
         // kimi needs extraData._kimiDeviceId for stable X-Msh-Device-Id (CLIProxyAPI parity)

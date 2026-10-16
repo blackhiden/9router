@@ -28,9 +28,16 @@ describe("OAUTH_TEST_CONFIG — codebuddy-intl (#4232)", () => {
     expect(src).toContain('"codebuddy-intl"');
   });
 
-  it('"codebuddy-intl" has tokenExists: true', () => {
-    // Match the specific entry: "codebuddy-intl": { tokenExists: true }
-    expect(src).toMatch(/"codebuddy-intl"\s*:\s*\{\s*tokenExists\s*:\s*true\s*\}/);
+  it('"codebuddy-intl" probes the Keycloak userinfo endpoint (MIBP fork §4)', () => {
+    // MIBP fork guard (AGENTS.md §4): codebuddy-intl access tokens are Keycloak
+    // JWTs, so this entry uses a buildUrl userinfo probe rather than upstream's
+    // `tokenExists: true` shape (a bare tokenExists check would pass for a
+    // revoked/expired token). Do NOT "fix" this back to the upstream shape —
+    // the guard is covered by tests/unit/codebuddy-intl-connection.test.js.
+    const entry = src.match(/"codebuddy-intl"\s*:\s*\{[\s\S]*?\n  \}/);
+    expect(entry).toBeTruthy();
+    expect(entry[0]).toContain("buildUrl");
+    expect(entry[0]).toContain("openid-connect/userinfo");
   });
 
   it('"codebuddy-cn" still has tokenExists: true (regression guard)', () => {

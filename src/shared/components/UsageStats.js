@@ -241,6 +241,9 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           freeProviders: FREE_PROVIDERS,
           nodeNameMap,
           isLLMProvider,
+          // Upstream dcc6a205: hidden providers must not appear in Usage even
+          // when a connection exists (Providers page filters them out).
+          isHiddenProvider: (id) => AI_PROVIDERS[id]?.hidden === true,
         }));
       })
       .catch(() => {});

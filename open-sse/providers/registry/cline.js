@@ -48,16 +48,16 @@ export default {
     { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
     { id: "google/gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash Lite Preview" },
     { id: "kwaipilot/kat-coder-pro", name: "KAT Coder Pro" },
-    // Free tier (verified live via GET /api/v1/ai/cline/recommended-models):
+    // Free tier (verified live 2026-10-13 via GET /api/v1/ai/cline/recommended-models
+    // free[] — static fallback when no Cline connection exists to merge the live
+    // feed; see services/clinepassModels.js):
     // billed $0 on usage, limited quota separate from ClinePass. The
     // cline-free/* aliases require Cline product headers (see shared/clineAuth.js)
     // or upstream 403s with "only available via Cline product surfaces".
-    { id: "cline-free/muse-spark-1.3-contributor", name: "Muse Spark 1.3 (Free)" },
-    { id: "stealth/pixel-canary", name: "Pixel Canary (Free)" },
-    { id: "stealth/space-bunny-alpha", name: "Space Bunny Alpha (Free)" },
+    { id: "cline-free/step-5-preview", name: "Step 5 Preview (Free)" },
     { id: "cline-free/mimo-v2.6-flash", name: "MiMo V2.6 Flash (Free)" },
-    { id: "cline-free/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash (Free)" },
-    { id: "cline-free/gemini-3.8-flash", name: "Gemini 3.8 Flash (Free)" },
+    { id: "cline-free/muse-spark-1.3-contributor", name: "Muse Spark 1.3 (Free)" },
+    { id: "cline-free/solar-mini4", name: "Solar Mini 4 (Free)" },
   ],
   oauth: {
     appBaseUrl: "https://app.cline.bot",
