@@ -14,58 +14,39 @@ if [[ "${1:-}" != "" ]]; then
 fi
 
 # --- Step 1: Choose Environment ---
-echo "Please select an option:"
-echo "1) Run using Pre-built Image (Recommended)"
-echo "2) Build from Source"
-echo "3) Run (For Developers)"
-read -r -p "Enter choice [1-2]: " choice
-
 # --- Step 2: Execute based on choice ---
-COMMIT="$(git rev-parse --short HEAD)"
-IMAGE_NAME="9router:${COMMIT}"
-case "$choice" in
-  1)
-    echo "--- Running with Pre-built Image ---"
-    docker compose up -d --remove-orphans --no-build
-    echo "Services are starting from remote image."
-    echo "Run 'docker compose logs -f' to see the logs."
-    ;;
-  2)
-    echo "--- Building from Source and Running ---"
+APP_VERSION="$(git rev-parse --short HEAD)"
+BASE_NAME="ghcr.io/blackhiden/9router"
+echo -n "Enter you version: "
+read -r VERSION
+if [ ! -z $VERSION ]; then
+  APP_VERSION=$VERSION
+fi
 
-    # Get Version Information
-    VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")"
-    COMMIT="$(git rev-parse --short HEAD)"
-    BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "--- Building from Source and Running ---"
+# Get Version Information
+IMAGE_NAME="${BASE_NAME}:${APP_VERSION}"
+APP_COMMIT="$(git rev-parse --short HEAD)"
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-    echo "Building with the following info:"
-    echo "  Version: ${VERSION}"
-    echo "  Commit: ${COMMIT}"
-    echo "  Build Date: ${BUILD_DATE}"
-    echo "  Image Name: ${IMAGE_NAME}"
-    echo "----------------------------------------"
+echo "Building with the following info:"
+echo "  Version: ${APP_VERSION}"
+echo "  Commit: ${APP_COMMIT}"
+echo "  Build Date: ${BUILD_DATE}"
+echo "  Image Name: ${IMAGE_NAME}"
+echo "----------------------------------------"
 
-    # Build and start the services with a local-only image tag
+# Build and start the services with a local-only image tag
 
-    echo "Building the Docker image..."
-    docker build \
-      -t ${IMAGE_NAME} \
-      --no-cache \
-      --build-arg VERSION="${VERSION}" \
-      --build-arg COMMIT="${COMMIT}" \
-      --build-arg BUILD_DATE="${BUILD_DATE}" .
-
-    echo "Starting the services..."
-    echo "Build complete. Services are starting."
-    echo "Run 'docker compose logs -f' to see the logs."
-    ;;
-  3) docker run --rm \
-    --name 9routertest \
-    --network host \
-    $IMAGE_NAME
-    ;;
-  *)
-    echo "Invalid choice. Please enter 1 or 2."
-    exit 1
-    ;;
-esac
+echo "Building the Docker image..."
+docker build \
+  -t ${IMAGE_NAME} \
+  --build-arg COMMIT="${APP_COMMIT}" \
+  --build-arg VERSION="${APP_VERSION}" \
+  --build-arg BUILD_DATE="${BUILD_DATE}" .
+docker tag ${IMAGE_NAME} "${BASE_NAME}:latest"
+docker push ${IMAGE_NAME}
+docker push "${BASE_NAME}:latest"
+echo "Starting the services..."
+echo "Build complete. Services are starting."
+echo "Run 'docker compose logs -f' to see the logs."

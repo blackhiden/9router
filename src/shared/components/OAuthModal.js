@@ -24,6 +24,9 @@ const DEVICE_CODE_PROVIDERS = [
   "freebuff",
   "muse",
   "glm",
+  "nous",
+  "minimax-code",
+  "minimax-code-global",
 ];
 
 const oauthProxyPoolStorageKey = (providerId) => `9router.oauthProxyPool.${providerId}`;
