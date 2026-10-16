@@ -316,11 +316,7 @@ async function refreshOAuthToken(connection) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
-<<<<<<< HEAD
-    if (provider === "codex" || provider === "grok-cli" || provider === "xai" || provider === "codebuddy-intl") {
-=======
-    if (provider === "codex" || provider === "grok-cli" || provider === "xai" || provider === "nous") {
->>>>>>> upstream/master
+    if (provider === "codex" || provider === "grok-cli" || provider === "xai" || provider === "codebuddy-intl" || provider === "nous") {
       return await refreshProviderCredentials(provider, connection, console);
     }
 
