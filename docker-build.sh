@@ -15,7 +15,7 @@ fi
 
 # --- Step 1: Choose Environment ---
 # --- Step 2: Execute based on choice ---
-APP_VERSION="$(git rev-parse --short HEAD)"
+APP_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")"
 BASE_NAME="ghcr.io/blackhiden/9router"
 echo -n "Enter you version: "
 read -r VERSION
