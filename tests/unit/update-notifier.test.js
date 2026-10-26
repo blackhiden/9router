@@ -20,7 +20,7 @@ beforeEach(async () => {
   vi.resetModules();
   vi.stubGlobal("fetch", mocks.fetch);
   mocks.fetch.mockReset();
-  mocks.fetch.mockResolvedValue(tagsResponse("v1.0.28"));
+  mocks.fetch.mockResolvedValue(tagsResponse("v1.0.29"));
   updateNotifier = await import("../../src/lib/updateNotifier.js");
 });
 
@@ -34,8 +34,8 @@ describe("updateNotifier", () => {
     const info = await updateNotifier.checkForUpdate();
 
     expect(info.hasUpdate).toBe(false);
-    expect(info.currentVersion).toBe("1.0.28");
-    expect(info.latestVersion).toBe("1.0.28");
+    expect(info.currentVersion).toBe("1.0.29");
+    expect(info.latestVersion).toBe("1.0.29");
     expect(info.source).toBe("https://github.com/arsydoni4326-alt/9routercustom.git");
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
     // Sourced from the GitHub tags API (newest-first), not package.json.
@@ -43,7 +43,7 @@ describe("updateNotifier", () => {
   });
 
   it("reports an update and emits an event when the latest tag is newer", async () => {
-    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.29"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.30"));
 
     const listener = vi.fn();
     updateNotifier.onUpdateAvailable(listener);
@@ -51,9 +51,9 @@ describe("updateNotifier", () => {
     const info = await updateNotifier.checkForUpdate();
 
     expect(info.hasUpdate).toBe(true);
-    expect(info.latestVersion).toBe("1.0.29");
+    expect(info.latestVersion).toBe("1.0.30");
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener.mock.calls[0][0].latestVersion).toBe("1.0.29");
+    expect(listener.mock.calls[0][0].latestVersion).toBe("1.0.30");
   });
 
   it("treats a suffixed custom tag with the same base version as no update", async () => {
@@ -66,12 +66,12 @@ describe("updateNotifier", () => {
   });
 
   it("treats a newer suffixed custom tag as an update", async () => {
-    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.29-arsydoni4326-alt"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.30-arsydoni4326-alt"));
 
     const info = await updateNotifier.checkForUpdate();
 
     expect(info.hasUpdate).toBe(true);
-    expect(info.latestVersion).toBe("1.0.29-arsydoni4326-alt");
+    expect(info.latestVersion).toBe("1.0.30-arsydoni4326-alt");
   });
 
   it("throttles repeat checks inside the cooldown window", async () => {
