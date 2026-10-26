@@ -69,13 +69,11 @@ describe("ModelSelectModal LIVE_CATALOG_PROVIDERS includes zed (#4244)", () => {
     const match = src.match(/const LIVE_CATALOG_PROVIDERS\s*=\s*\[([^\]]+)\]/);
     const list = match[1];
     expect(list).toContain('"cursor"');
-    // MIBP fork (§5 Cline fork-priority): cline/clinepass were intentionally
-    // dropped from the live-catalog list — their shared endpoint returns the
-    // full ~451-model catalog with no per-account entitlement filter, so the
-    // modal uses the static registry instead (commit 2208444b). Only cursor
-    // and zed use per-account live catalogs here.
-    expect(list).not.toContain('"cline"');
-    expect(list).not.toContain('"clinepass"');
+    // MIBP fork (§5 Cline fork-priority): cline/clinepass are intentionally
+    // kept in the live-catalog list alongside cursor and zed — the fork
+    // supports per-account live catalogs for cline/clinepass free-tier models.
+    expect(list).toContain('"cline"');
+    expect(list).toContain('"clinepass"');
   });
 
   it("zedModels hook call is present in the file", () => {

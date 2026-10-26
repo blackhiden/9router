@@ -398,7 +398,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       }
 
       // Device code flow providers (must match oauth providers with flowType: "device_code")
-      if (DEVICE_CODE_PROVIDERS.includes(provider)) {
+if (DEVICE_CODE_PROVIDERS.includes(provider)) {
         setIsDeviceCode(true);
         setStep("waiting");
 

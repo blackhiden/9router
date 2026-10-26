@@ -249,7 +249,7 @@ describe("freebuff executor wire shape", () => {
 });
 
 describe("freebuff session pre-flight", () => {
-  it("claims a session via POST /session with x-freebuff-model and caches it per token+model", async () => {
+  it("claims a session via POST /session/admission with x-freebuff-model and caches it per token+model", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
         status: "active",
@@ -262,10 +262,13 @@ describe("freebuff session pre-flight", () => {
     expect(first).toEqual({ instanceId: "inst-1", status: "active" });
 
     const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
+    // CLI 0.2.x claims through the admission endpoint (POST /session 404s now).
+    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session/admission");
     expect(opts.method).toBe("POST");
     expect(opts.headers["x-freebuff-model"]).toBe("deepseek/deepseek-v4-flash");
     expect(opts.headers.Authorization).toBe("Bearer tok-1");
+    expect(opts.headers["x-freebuff-client"]).toBe("cli");
+    expect(opts.headers["x-freebuff-client-version"]).toBe("0.2.34");
 
     // Second call for the same token+model hits the cache — no new claim.
     await ensureSession("tok-1", "deepseek/deepseek-v4-flash", null);
@@ -277,6 +280,20 @@ describe("freebuff session pre-flight", () => {
     );
     await ensureSession("tok-1", "z-ai/glm-5.3-flash", null);
     expect(fetchMock.mock.calls.length).toBe(2);
+  });
+
+  it("falls back to POST /session when the backend predates the admission endpoint", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ error: "not_found" }, { status: 404, ok: false }))
+      .mockResolvedValueOnce(
+        jsonResponse({ status: "active", instanceId: "inst-legacy", expiresAt: new Date(Date.now() + 3600000).toISOString() }),
+      );
+    const res = await ensureSession("tok-1", "deepseek/deepseek-v4-flash", null);
+    expect(res.instanceId).toBe("inst-legacy");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://www.codebuff.com/api/v1/freebuff/session/admission",
+      "https://www.codebuff.com/api/v1/freebuff/session",
+    ]);
   });
 
   it("treats status none as no-session-needed (instanceId null)", async () => {
@@ -383,6 +400,28 @@ describe("freebuff session pre-flight", () => {
       expect(error.status).toBeUndefined();
       expect(error.resetsAtMs).toBeUndefined();
     }
+  });
+
+  it("refines a bare banned gate with the GET details (region lock must not read as a ban)", async () => {
+    fetchMock.mockImplementation(async (url, opts = {}) => {
+      if (opts.method === "POST") {
+        // The admission endpoint answers region-locked accounts with only this.
+        return jsonResponse({ status: "banned" }, { status: 403, ok: false });
+      }
+      return jsonResponse(
+        {
+          status: "banned",
+          pickerCountryCode: "ID",
+          countryVerified: false,
+          verificationReason: "region_locked",
+        },
+        { status: 403, ok: false },
+      );
+    });
+    await expect(requestSession("tok-1", "mimo/mimo-v2.5", null)).rejects.toThrow(
+      /not available from this network \(region-locked: ID\)/i,
+    );
+    expect(fetchMock.mock.calls.map(([, opts]) => opts.method)).toEqual(["POST", "GET"]);
   });
 
   it("throws a friendly error on country_blocked", async () => {
@@ -524,12 +563,11 @@ describe("freebuff run registration", () => {
     expect(rootAgentIdForModel("upstage/solar-mini4")).toBe("base3-free-solar-mini4");
     expect(rootAgentIdForModel("stealth/space-bunny-alpha")).toBe("base3-free-space-bunny-alpha");
     expect(rootAgentIdForModel("meta/muse-spark-1.2-contributor")).toBe("base3-free-muse-spark");
-    expect(rootAgentIdForModel("anthropic/claude-fable-5.1")).toBe("base3-free-fable");
-    // Withdrawn upstream models are unmapped — they fall back, and the backend
-    // refuses their sessions anyway.
-    expect(rootAgentIdForModel("meta/muse-spark-1.3-contributor")).toBe("base2-free");
-    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base2-free");
-    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base2-free");
+    // Fable has no base3 root — the CLI keeps its base2 agent even now.
+    expect(rootAgentIdForModel("anthropic/claude-fable-5.1")).toBe("base2-free-fable");
+    expect(rootAgentIdForModel("meta/muse-spark-1.3-contributor")).toBe("base3-free-muse-spark-1-3");
+    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base3-free-deepseek");
+    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base3-free-minimax-m3");
     expect(rootAgentIdForModel("some/unknown-model")).toBe("base2-free");
   });
 
@@ -577,7 +615,7 @@ describe("freebuff executor execute", () => {
   // Default happy-path backend: session active, run registered, chat 200.
   const happyPath = () => {
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) {
+      if (url.startsWith(SESSION_URL)) {
         return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       }
       if (url === RUN_URL) {
@@ -613,7 +651,7 @@ describe("freebuff executor execute", () => {
   it("retries exactly once on 428 with a fresh session AND a fresh run", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) {
+      if (url.startsWith(SESSION_URL)) {
         return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       }
       if (url === RUN_URL) {
@@ -631,7 +669,7 @@ describe("freebuff executor execute", () => {
     expect(response.status).toBe(200);
     expect(chatHits).toBe(2);
     // Session was claimed twice (initial + forced re-claim).
-    expect(fetchMock.mock.calls.filter(([u]) => u === SESSION_URL).length).toBe(2);
+    expect(fetchMock.mock.calls.filter(([u]) => u.startsWith(SESSION_URL)).length).toBe(2);
     // Runs: START #1, FINISH(cancelled) #1 (abandoned on 428), START #2,
     // FINISH(completed) #2.
     const runCalls = fetchMock.mock.calls.filter(([u]) => u === RUN_URL);
@@ -651,7 +689,7 @@ describe("freebuff executor execute", () => {
   it("re-claims the session on 409 session_superseded and retries once", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url.startsWith(SESSION_URL)) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-2" });
       chatHits += 1;
       if (chatHits === 1) {
@@ -667,7 +705,7 @@ describe("freebuff executor execute", () => {
     expect(response.status).toBe(200);
     expect(chatHits).toBe(2);
     // Session re-claimed (initial + forced) and runs restarted.
-    expect(fetchMock.mock.calls.filter(([u]) => u === SESSION_URL).length).toBe(2);
+    expect(fetchMock.mock.calls.filter(([u]) => u.startsWith(SESSION_URL)).length).toBe(2);
     const runCalls = fetchMock.mock.calls.filter(([u]) => u === RUN_URL);
     expect(runCalls.filter((c) => JSON.parse(c[1].body).action === "START").length).toBe(2);
   });
@@ -675,7 +713,7 @@ describe("freebuff executor execute", () => {
   it("re-claims the session on 410 session_expired and retries once", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url.startsWith(SESSION_URL)) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-2" });
       chatHits += 1;
       if (chatHits === 1) return jsonResponse({ error: "session_expired" }, { status: 410, ok: false });
@@ -691,7 +729,7 @@ describe("freebuff executor execute", () => {
 
   it("throws a 401 re-login error when the chat endpoint rejects the token", async () => {
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url.startsWith(SESSION_URL)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       return jsonResponse({ error: "unauthorized" }, { status: 401, ok: false });
     });
@@ -714,7 +752,7 @@ describe("freebuff executor execute", () => {
     // 400 (not in the 429/502/503 retry set) so the test stays fast and mirrors
     // the real upstream rejection.
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url.startsWith(SESSION_URL)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       return jsonResponse({ error: "upstream boom" }, { status: 400, ok: false });
     });
@@ -734,7 +772,7 @@ describe("freebuff executor execute", () => {
   it("finishes the run as failed when execute throws mid-flight", async () => {
     // AbortError (caller/stream abort) is never retried, keeping this test fast.
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url.startsWith(SESSION_URL)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
     });
@@ -755,7 +793,7 @@ describe("freebuff executor execute", () => {
   it("retries the chat POST on a transient fetch-level network error", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url.startsWith(SESSION_URL)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       chatHits += 1;
       if (chatHits === 1) throw new Error("fetch failed (cause: ECONNRESET)");
@@ -778,7 +816,7 @@ describe("freebuff executor execute", () => {
     let chatHits = 0;
     let runStartCount = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url.startsWith(SESSION_URL)) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) {
         // First START succeeds (run-1). Every later call fails with the
         // transient ECONNRESET: the fire-and-forget FINISH swallows it, and

@@ -20,7 +20,7 @@ beforeEach(async () => {
   vi.resetModules();
   vi.stubGlobal("fetch", mocks.fetch);
   mocks.fetch.mockReset();
-  mocks.fetch.mockResolvedValue(tagsResponse("v0.5.65"));
+  mocks.fetch.mockResolvedValue(tagsResponse("v1.0.28"));
   updateNotifier = await import("../../src/lib/updateNotifier.js");
 });
 
@@ -34,8 +34,8 @@ describe("updateNotifier", () => {
     const info = await updateNotifier.checkForUpdate();
 
     expect(info.hasUpdate).toBe(false);
-    expect(info.currentVersion).toBe("0.5.65");
-    expect(info.latestVersion).toBe("0.5.65");
+    expect(info.currentVersion).toBe("1.0.28");
+    expect(info.latestVersion).toBe("1.0.28");
     expect(info.source).toBe("https://github.com/arsydoni4326-alt/9routercustom.git");
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
     // Sourced from the GitHub tags API (newest-first), not package.json.
@@ -43,7 +43,7 @@ describe("updateNotifier", () => {
   });
 
   it("reports an update and emits an event when the latest tag is newer", async () => {
-    mocks.fetch.mockResolvedValue(tagsResponse("v0.5.66"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.29"));
 
     const listener = vi.fn();
     updateNotifier.onUpdateAvailable(listener);
@@ -51,27 +51,27 @@ describe("updateNotifier", () => {
     const info = await updateNotifier.checkForUpdate();
 
     expect(info.hasUpdate).toBe(true);
-    expect(info.latestVersion).toBe("0.5.66");
+    expect(info.latestVersion).toBe("1.0.29");
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener.mock.calls[0][0].latestVersion).toBe("0.5.66");
+    expect(listener.mock.calls[0][0].latestVersion).toBe("1.0.29");
   });
 
   it("treats a suffixed custom tag with the same base version as no update", async () => {
-    mocks.fetch.mockResolvedValue(tagsResponse("v0.5.65-arsydoni4326-alt"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.28-arsydoni4326-alt"));
 
     const info = await updateNotifier.checkForUpdate();
 
-    expect(info.latestVersion).toBe("0.5.65-arsydoni4326-alt");
+    expect(info.latestVersion).toBe("1.0.28-arsydoni4326-alt");
     expect(info.hasUpdate).toBe(false);
   });
 
   it("treats a newer suffixed custom tag as an update", async () => {
-    mocks.fetch.mockResolvedValue(tagsResponse("v0.5.66-arsydoni4326-alt"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.29-arsydoni4326-alt"));
 
     const info = await updateNotifier.checkForUpdate();
 
     expect(info.hasUpdate).toBe(true);
-    expect(info.latestVersion).toBe("0.5.66-arsydoni4326-alt");
+    expect(info.latestVersion).toBe("1.0.29-arsydoni4326-alt");
   });
 
   it("throttles repeat checks inside the cooldown window", async () => {
@@ -88,12 +88,12 @@ describe("updateNotifier", () => {
     // Simulate the cooldown elapsing.
     global.__updateNotifierState.lastCheckAt = 0;
 
-    mocks.fetch.mockResolvedValue(tagsResponse("v0.5.67"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.30"));
     const info = await updateNotifier.checkForUpdate();
 
     expect(mocks.fetch).toHaveBeenCalledTimes(2);
     expect(info.hasUpdate).toBe(true);
-    expect(info.latestVersion).toBe("0.5.67");
+    expect(info.latestVersion).toBe("1.0.30");
   });
 
   it("fails gracefully when the GitHub fetch fails", async () => {
@@ -106,7 +106,7 @@ describe("updateNotifier", () => {
   });
 
   it("unsubscribes listeners returned by onUpdateAvailable", async () => {
-    mocks.fetch.mockResolvedValue(tagsResponse("v0.5.68"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.31"));
     const listener = vi.fn();
     const unsubscribe = updateNotifier.onUpdateAvailable(listener);
 
@@ -117,7 +117,7 @@ describe("updateNotifier", () => {
 
     // Cooldown passed + newer tag again → would emit if still subscribed.
     global.__updateNotifierState.lastCheckAt = 0;
-    mocks.fetch.mockResolvedValue(tagsResponse("v0.5.69"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.32"));
     await updateNotifier.checkForUpdate();
     expect(listener).toHaveBeenCalledTimes(1);
   });
@@ -139,7 +139,7 @@ describe("updateNotifier", () => {
     vi.resetModules();
     vi.stubGlobal("fetch", mocks.fetch);
     mocks.fetch.mockReset();
-    mocks.fetch.mockResolvedValue(tagsResponse("v0.5.70"));
+    mocks.fetch.mockResolvedValue(tagsResponse("v1.0.33"));
     updateNotifier = await import("../../src/lib/updateNotifier.js");
 
     // The poller only fires after the configured interval — no check at startup.

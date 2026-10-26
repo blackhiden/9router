@@ -1,9 +1,17 @@
 // P0 GOLDEN: lock buildUrl + buildHeaders cho mọi provider trên code CŨ.
 // Sinh snapshot lần đầu (baseline) → sau refactor chạy lại phải khớp y hệt.
 // Mock proxyFetch + uuid-heavy executors KHÔNG cần ở đây vì chỉ gọi buildUrl/buildHeaders (pure).
+import fs from "fs";
 import { describe, it, expect } from "vitest";
 import { PROVIDERS } from "../../open-sse/config/providers.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
+
+// The app version is baked into some product headers (kimi X-Msh-Version) and
+// changes on every release — normalise it so a version bump is not a golden diff.
+const APP_VERSION = JSON.parse(
+  fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+).version;
+const APP_VERSION_RE = new RegExp(`(?<![\\w.])${APP_VERSION.replace(/\./g, "\\.")}(?![\\w.])`, "g");
 
 // Credentials mẫu cố định (deterministic) — KHÔNG dùng Date.now/random.
 const API_KEY_CRED = { apiKey: "sk-test-APIKEY", providerSpecificData: {} };
@@ -23,14 +31,27 @@ const SPECIALIZED = new Set([
   "xiaomi-tokenplan", "mimo-free",
 ]);
 
+// Per-process / per-request values: kimi's random device name, minimax's session UUID.
+const VOLATILE_HEADERS = new Set(["x-msh-device-name", "x-mavis-session-id"]);
+
+// Machine-derived values: OS/arch (kimi device model) and local timezone
+// (minimax session offset). Normalised so the snapshot is portable.
+const PLATFORM_HEADERS = new Set(["x-msh-device-model"]);
+const MACHINE_HEADERS = { "x-mavis-timezone-offset": "<TZ_OFFSET>" };
+
 // Sanitize header: khử token + field thời gian động (kimi X-Msh-Device-Id) để snapshot ổn định.
 function sanitize(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers)) {
+    const lower = k.toLowerCase();
+    if (VOLATILE_HEADERS.has(lower)) { out[k] = "<VOLATILE>"; continue; }
+    if (PLATFORM_HEADERS.has(lower)) { out[k] = "<PLATFORM>"; continue; }
+    if (MACHINE_HEADERS[lower]) { out[k] = MACHINE_HEADERS[lower]; continue; }
     out[k] = typeof v === "string"
       ? v.replace(/Bearer .+/, "Bearer <TOK>")
           .replace(/sk-test-APIKEY|tok-test-ACCESS/g, "<CRED>")
           .replace(/kimi-\d{10,}/g, "kimi-<TS>")
+          .replace(APP_VERSION_RE, "<APP_VERSION>")
       : v;
   }
   return out;

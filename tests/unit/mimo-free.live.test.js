@@ -51,7 +51,12 @@ describe("MiMo Free bootstrap (live)", () => {
   });
 });
 
-describe("MiMo Free anti-abuse gate (live)", () => {
+// Xiaomi ended the free MiMo channel ("MiMo free API service has ended"), so the
+// provider is hidden and the chat endpoint now answers 400 "Unsupported model
+// mimo-auto" for any User-Agent. The gate assertion below cannot hold until a
+// replacement channel (OAuth MiMo Platform) is wired; bootstrap above still
+// returns a JWT, so it stays live as a canary.
+describe.skip("MiMo Free anti-abuse gate (live)", () => {
   it("chat WITH Chrome User-Agent → 200", async () => {
     const { jwt } = await bootstrapWith(CHROME_UA);
     const r = await chatWith(jwt, CHROME_UA);
