@@ -838,7 +838,8 @@
           "combined": true,
           "header": "Authorization",
           "scheme": "bearer"
-        }
+        },
+        "thinkingFormat": "openai-responses"
       }
     ]
   },
@@ -1125,6 +1126,11 @@
     "validateUrl": "https://api.sambanova.ai/v1/models",
     "format": "openai"
   },
+  "sensenova": {
+    "baseUrl": "https://token.sensenova.cn/v1/chat/completions",
+    "validateUrl": "https://token.sensenova.cn/v1/models",
+    "format": "openai"
+  },
   "tencent": {
     "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",
     "validateUrl": "https://api.hunyuan.cloud.tencent.com/v1/models",
@@ -1239,7 +1245,8 @@
           "hooks": [
             "museHeaders"
           ]
-        }
+        },
+        "thinkingFormat": "openai-responses"
       }
     ]
   },
