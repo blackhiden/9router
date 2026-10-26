@@ -12,7 +12,7 @@
  * "cline-free/deepseek-v4.1-flash" into "deepseek-v4.1-flash" and match
  * MODEL_PRICING, so the namespace is checked before both fallbacks.
  */
-export const FREE_MODEL_NAMESPACES = ["cline-free/"];
+export const FREE_MODEL_NAMESPACES = ["cline-free/", "stealth/"];
 
 export const ZERO_PRICING = {
   input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0,

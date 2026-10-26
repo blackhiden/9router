@@ -25,6 +25,9 @@ import { fetchOAuthWithPool, oauthProxyPoolIdFrom } from "../oauthProxy.js";
 // server builds loginUrl from the host it was called on — so this must stay
 // https://freebuff.com (www.codebuff.com would yield the wrong login link).
 const LOGIN_HOST = "https://freebuff.com";
+// Published CLI version whose login endpoints/handshake we mirror (freebuff
+// 0.2.34, 2026-10-22). Keep in step with the executor's FREEBUFF_CLI_VERSION.
+const FREEBUFF_CLI_VERSION = "0.2.34";
 
 const freebuff = {
   config: FREEBUFF_CONFIG,
@@ -39,7 +42,9 @@ const freebuff = {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
-          "User-Agent": "codebuff-cli/0.0.138",
+          "User-Agent": `codebuff-cli/${FREEBUFF_CLI_VERSION}`,
+          "x-freebuff-client": "cli",
+          "x-freebuff-client-version": FREEBUFF_CLI_VERSION,
         },
         body: JSON.stringify({ fingerprintId }),
       },
@@ -101,7 +106,9 @@ const freebuff = {
         method: "GET",
         headers: {
           Accept: "application/json",
-          "User-Agent": "codebuff-cli/0.0.138",
+          "User-Agent": `codebuff-cli/${FREEBUFF_CLI_VERSION}`,
+          "x-freebuff-client": "cli",
+          "x-freebuff-client-version": FREEBUFF_CLI_VERSION,
         },
       },
       oauthProxyPoolIdFrom(options),

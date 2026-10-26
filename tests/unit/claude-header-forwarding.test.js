@@ -268,22 +268,21 @@ describe("proxyAwareFetch — api.anthropic.com routing", () => {
     vi.restoreAllMocks();
   });
 
-  it("routes api.anthropic.com to gotScraping (non-streaming) and returns ok response", async () => {
-    // Mock got-scraping before module load
-    vi.doMock("got-scraping", () => {
-      const mockGotScraping = vi.fn().mockResolvedValue({
-        statusCode: 200,
-        statusMessage: "OK",
-        headers: { "content-type": "application/json" },
-        rawBody: Buffer.from(JSON.stringify({ id: "msg_test" })),
-      });
-      mockGotScraping.stream = vi.fn();
-      return { gotScraping: mockGotScraping };
-    });
+  // JA3 spoofing through got-scraping is intentionally disabled in proxyFetch
+  // ("not in use", kept commented for a future re-enable), so a non-streaming
+  // api.anthropic.com request must go straight through native fetch.
+  it("sends a non-streaming api.anthropic.com request through native fetch", async () => {
+    const gotScrapingMock = vi.fn();
+    vi.doMock("got-scraping", () => ({ gotScraping: gotScrapingMock }));
+
+    const originalFetch = globalThis.fetch;
+    const nativeFetch = vi.fn().mockResolvedValue(
+      Response.json({ id: "msg_test" }),
+    );
+    globalThis.fetch = nativeFetch;
 
     vi.resetModules();
     const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
-    const { gotScraping } = await import("got-scraping");
 
     const res = await proxyAwareFetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -292,11 +291,15 @@ describe("proxyAwareFetch — api.anthropic.com routing", () => {
       body: JSON.stringify({ model: "claude-3-5-sonnet-20241022", messages: [] }),
     });
 
-    expect(gotScraping).toHaveBeenCalledOnce();
+    expect(gotScrapingMock).not.toHaveBeenCalled();
+    expect(nativeFetch).toHaveBeenCalledOnce();
+    expect(String(nativeFetch.mock.calls[0][0])).toBe("https://api.anthropic.com/v1/messages");
     expect(res.ok).toBe(true);
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.id).toBe("msg_test");
+
+    globalThis.fetch = originalFetch;
   });
 
   it("falls back gracefully when got-scraping throws on non-streaming path", async () => {

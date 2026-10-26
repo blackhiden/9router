@@ -7,7 +7,18 @@ import { filterToOpenAIFormat } from "../../open-sse/translator/formats/openai.j
 import { parseSSELine } from "../../open-sse/utils/streamHelpers.js";
 
 describe("request normalization", () => {
-  it("claudeToOpenAIRequest flattens text-only content arrays into string", () => {
+  // collapseTextParts only flattens a lone text block; several blocks stay a
+  // block array so per-block fields (cache_control, provider hints) survive.
+  it("claudeToOpenAIRequest collapses a single text block into a string", () => {
+    const body = {
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    };
+
+    const result = claudeToOpenAIRequest("gpt-oss:120b", body, true);
+    expect(result.messages[0].content).toBe("hi");
+  });
+
+  it("claudeToOpenAIRequest keeps multiple text blocks as blocks", () => {
     const body = {
       messages: [
         {
@@ -21,7 +32,10 @@ describe("request normalization", () => {
     };
 
     const result = claudeToOpenAIRequest("gpt-oss:120b", body, true);
-    expect(result.messages[0].content).toBe("hi\nthere");
+    expect(result.messages[0].content).toEqual([
+      { type: "text", text: "hi" },
+      { type: "text", text: "there" },
+    ]);
   });
 
   it("claudeToOpenAIRequest preserves multimodal arrays", () => {
@@ -48,8 +62,18 @@ describe("request normalization", () => {
     expect(Array.isArray(result.messages[0].content)).toBe(true);
   });
 
-  it("filterToOpenAIFormat flattens text-only arrays to string", () => {
-    const body = {
+  // filterToOpenAIFormat strips Claude-only blocks (signature/thinking) and keeps
+  // text blocks as blocks; it never rewrites arrays into a joined string.
+  it("filterToOpenAIFormat keeps text blocks and drops Claude-only fields", () => {
+    const single = filterToOpenAIFormat({
+      messages: [{
+        role: "user",
+        content: [{ type: "text", text: "a", cache_control: { type: "ephemeral" } }],
+      }],
+    });
+    expect(single.messages[0].content).toEqual([{ type: "text", text: "a" }]);
+
+    const multi = filterToOpenAIFormat({
       messages: [
         {
           role: "user",
@@ -59,10 +83,11 @@ describe("request normalization", () => {
           ],
         },
       ],
-    };
-
-    const result = filterToOpenAIFormat(JSON.parse(JSON.stringify(body)));
-    expect(result.messages[0].content).toBe("a\nb");
+    });
+    expect(multi.messages[0].content).toEqual([
+      { type: "text", text: "a" },
+      { type: "text", text: "b" },
+    ]);
   });
 
   it("translateRequest keeps /v1/messages Claude->OpenAI text payloads string-safe", () => {
@@ -92,8 +117,10 @@ describe("request normalization", () => {
     );
 
     const userMessage = result.messages.find((m) => m.role === "user");
-    expect(typeof userMessage.content).toBe("string");
-    expect(userMessage.content).toBe("hello\nworld");
+    expect(userMessage.content).toEqual([
+      { type: "text", text: "hello" },
+      { type: "text", text: "world" },
+    ]);
   });
 
   it("translateRequest strips unsupported Anthropic output_config for MiniMax Claude-compatible endpoints", () => {
@@ -171,7 +198,8 @@ describe("request normalization", () => {
       done: false,
     });
 
-    const parsed = parseSSELine(raw);
+    // Raw NDJSON is only accepted when the caller declares the Ollama format.
+    const parsed = parseSSELine(raw, FORMATS.OLLAMA);
     expect(parsed).toEqual({
       model: "gpt-oss:120b",
       message: { role: "assistant", content: "hello" },

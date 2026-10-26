@@ -33,6 +33,16 @@ import { markPoolUnfit, clearPoolUnfit } from "../services/proxyPoolFitness.js";
  * codebuff_metadata.freebuff_instance_id.
  */
 const SESSION_PATH = "/api/v1/freebuff/session";
+// Since CLI 0.2.x a claim goes through the admission endpoint; POST /session
+// answers 404/405 (the CLI reports that as "session_admission_unsupported").
+// Older backends only knew /session, so the claim retries it on 404/405.
+const SESSION_ADMISSION_PATH = "/api/v1/freebuff/session/admission";
+const SESSION_LEGACY_FALLBACK_STATUSES = new Set([404, 405]);
+// Verified against freebuff 0.2.34 (2026-10-22). The backend reads the client
+// version from this header on every session call, so keep it in step with the
+// published CLI — a stale version is treated as an outdated client.
+const FREEBUFF_CLI_VERSION = "0.2.34";
+const FREEBUFF_USER_AGENT = `codebuff-cli/${FREEBUFF_CLI_VERSION}`;
 const RUN_PATH = "/api/v1/agent-runs";
 const SESSION_DEFAULT_TTL_MS = 60 * 60 * 1000; // active sessions live ~1h
 
@@ -116,25 +126,34 @@ function injectEndTurnTool(body) {
 // base3, and the backend can return 404 "No endpoints found" for the old
 // base2 roots during the transition).
 //
-// Withdrawn upstream models (deepseek-v4-pro, minimax-m3, stealth/ox-alpha,
-// google/gemini-3.8-flash, meta/muse-spark-1.3-contributor,
-// openai/gpt-5.6-luna) are deliberately absent: no new session can be admitted
-// on them, so mapping them would only hide a dead pick behind a wrong root.
-// The 5.6-luna root stays (released clients drain on it; server coerces).
-// z-ai/glm-5.2 stays mapped (referral-earned accounts can still run it) even
-// though it is not a standing picker row.
+// Source of truth: freebuff 0.2.34 `FREEBUFF_CLI_BASE3_AGENT_ID_BY_MODEL`
+// (base3 root per wire id, base2 fallback when no base3 root exists).
+// Models without a base3 root — Fable 5.1, the experimental Kimi K3 / Luna-ES
+// rows — keep their base2 root, exactly like the CLI's `keT()`/`CWT()` chain.
+// Unknown ids fall back to `base2-free`.
 const FREE_ROOT_AGENT_BY_MODEL = {
   "deepseek/deepseek-v4-flash": "base3-free-deepseek-flash",
+  "deepseek/deepseek-v4-flash-fast": "base3-fast-free-deepseek-flash",
+  "deepseek/deepseek-v4-pro": "base3-free-deepseek",
+  "minimax/minimax-m3": "base3-free-minimax-m3",
   "z-ai/glm-5.2": "base3-free-glm",
   "z-ai/glm-5.3-flash": "base3-free-glm-5-3-flash",
+  "crof/kimi-k3-eco": "base3-free-kimi-k3-eco",
+  "openai/gpt-5.6-luna-es": "base3-free-luna-es",
   "mimo/mimo-v2.5": "base3-free-mimo",
+  "mimo/mimo-v2.6-pro": "base3-free-mimo-2-6-pro",
   "openai/gpt-5.6-luna": "base3-free-luna",
   "openai/gpt-6-luna": "base3-free-luna-6",
+  "openai/gpt-6.1-sol": "base3-free-gpt-6-1-sol",
+  "google/gemini-3.8-flash": "base3-free-gemini-3-8-flash",
+  "google/gemini-4-argon": "base3-free-gemini-4-argon",
   "upstage/solar-pro4": "base3-free-solar-pro4",
   "upstage/solar-mini4": "base3-free-solar-mini4",
   "stealth/space-bunny-alpha": "base3-free-space-bunny-alpha",
+  "stealth/ox-alpha": "base3-free-ox-alpha",
   "meta/muse-spark-1.2-contributor": "base3-free-muse-spark",
-  "anthropic/claude-fable-5.1": "base3-free-fable",
+  "meta/muse-spark-1.3-contributor": "base3-free-muse-spark-1-3",
+  "anthropic/claude-fable-5.1": "base2-free-fable",
 };
 
 // Per-token+model session cache (in-memory; keyed so multi-account setups
@@ -239,7 +258,7 @@ function throwSessionGateError(gate, { token, model, proxyKey, poolId, log }) {
     // Pool-scoped, not account-scoped: the caller retries via another pool
     // instead of locking the account (resetsAtMs intentionally absent).
     const err = new Error(
-      `Freebuff limited-mode IP rejected ${model} — this IP only allows DeepSeek V4 Flash / MiMo 2.5. Use a full-access proxy or a different model.`,
+      `Freebuff limited-mode IP rejected ${model} — this network only allows the limited-mode picks (MiMo 2.6 Flash Fast, GLM 5.3 Flash, DeepSeek V4.1 Flash, Solar Mini 4, Solar Pro 4). Use a full-access proxy or a different model.`,
     );
     err.status = 409;
     err.poolScoped = { poolId, scope, reason: "limited_ip" };
@@ -250,6 +269,85 @@ function throwSessionGateError(gate, { token, model, proxyKey, poolId, log }) {
 
 function sessionOrigin() {
   return new URL(PROVIDERS.freebuff.baseUrl).origin; // https://www.codebuff.com
+}
+
+// The CLI tags every session call with the device's timezone (`x-fb-timezone`)
+// and its client version; the free-tier gate uses the zone hint when deciding
+// limited vs full access. Never throws — a missing Intl zone falls back to a
+// fixed GMT offset.
+function localTimeZoneHeader() {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (typeof zone === "string" && zone.trim()) return zone.trim();
+  } catch { /* fall through to the offset form */ }
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMinutes);
+  return `GMT${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+}
+
+// Shared session headers, mirroring the CLI's callFreebuffSession.
+function sessionHeaders(token, extra = {}) {
+  return {
+    Authorization: `Bearer ${token}`,
+    "User-Agent": FREEBUFF_USER_AGENT,
+    // Client family + version ride on every session/run call; the backend uses
+    // them to pick a protocol and to refuse outdated clients.
+    "x-freebuff-client": "cli",
+    "x-freebuff-client-version": FREEBUFF_CLI_VERSION,
+    "x-fb-timezone": localTimeZoneHeader(),
+    ...extra,
+  };
+}
+
+// 403 {error:"account_suspended"} is an account standing issue (ToS), not a
+// region or credential problem — the CLI surfaces the server's own message and
+// the appeal link, so mirror that instead of guessing.
+function suspendedAccountError(data) {
+  if (!data || data.error !== "account_suspended") return null;
+  const detail = typeof data.message === "string" && data.message.trim()
+    ? data.message.trim()
+    : "Your Freebuff account has been suspended for activity that violates the Freebuff terms of service.";
+  const err = new Error(`${detail}${/appeal/i.test(detail) ? "" : " Appeal at https://freebuff.com/account?tab=standing."}`);
+  err.status = 403;
+  err.code = "account_suspended";
+  return err;
+}
+
+// A region/standing refusal from the session endpoint: 403 with a `status`
+// gate. `status:"banned"` also covers region_locked accounts, so the reason
+// must ride along (the usage card otherwise claims the account was banned).
+function sessionGateMessage(data) {
+  const status = data?.status;
+  if (status === "banned") {
+    const regionLocked = data?.verificationReason === "region_locked" || data?.countryVerified === false;
+    if (regionLocked && data?.pickerCountryCode) {
+      return `Freebuff is not available from this network (region-locked: ${data.pickerCountryCode}). Use a full-access proxy or connect from a supported country.`;
+    }
+    return "Your Freebuff account has been suspended or banned.";
+  }
+  if (status === "country_blocked") return "Freebuff is not available in your region (country blocked).";
+  return null;
+}
+
+// POST /session/admission refuses a region-locked account with a bare
+// `{status:"banned"}`. Only the GET endpoint carries the details
+// (pickerCountryCode / countryVerified / verificationReason), and calling a
+// region-locked user "banned" is a wrong accusation — so read the gate once and
+// prefer its wording when it is more specific. Never throws, never claims.
+async function refineBannedGate(token, data, proxyOptions) {
+  if (data?.status !== "banned") return null;
+  if (data.pickerCountryCode || data.verificationReason || data.countryVerified === false) return null;
+  try {
+    const response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
+      method: "GET",
+      headers: { ...sessionHeaders(token), Accept: "application/json" },
+    }, proxyOptions);
+    const detail = await response.json().catch(() => null);
+    return detail ? sessionGateMessage(detail) : null;
+  } catch {
+    return null;
+  }
 }
 
 function sessionCacheKey(token, model) {
@@ -288,18 +386,41 @@ async function requestSession(token, model, proxyOptions) {
   // checked before the POST so a closed offer never burns a claim attempt.
   await guardOfferClaim(token, model, proxyOptions);
 
-  const response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
+  const claimOptions = () => ({
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
-      "x-freebuff-model": model,
+      ...sessionHeaders(token, {
+        "x-freebuff-model": model,
+        // The CLI meters a claim against the session balance, not the wallet.
+        "x-freebuff-wallet-spend-limit": "session",
+      }),
     },
-  }, proxyOptions);
+  });
+
+  let response = await fetchWithNetworkRetry(
+    `${sessionOrigin()}${SESSION_ADMISSION_PATH}`,
+    claimOptions(),
+    proxyOptions,
+  );
+  // Pre-admission backends only serve POST /session.
+  if (SESSION_LEGACY_FALLBACK_STATUSES.has(response.status)) {
+    response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, claimOptions(), proxyOptions);
+  }
 
   let data = {};
   try { data = await response.json(); } catch { data = {}; }
+
+  // Account standing refusals arrive as 403 with an error/gate body; surface the
+  // server's own wording before the generic status handling.
+  const suspended = suspendedAccountError(data);
+  if (suspended) throw suspended;
+  const gateMessage = (await refineBannedGate(token, data, proxyOptions)) ?? sessionGateMessage(data);
+  if (response.status === 403 && gateMessage) {
+    const err = new Error(gateMessage);
+    err.status = 403;
+    throw err;
+  }
 
   if (response.status === 401) {
     const err = new Error("Freebuff session auth failed (401) — re-login in the dashboard");
@@ -316,6 +437,9 @@ async function requestSession(token, model, proxyOptions) {
     model_locked: "Freebuff session is locked to another model — end it in the CLI or wait for it to expire.",
     model_unavailable: "This model is not available on Freebuff right now.",
     premium_slot_taken: "Freebuff premium slot is taken — try another model.",
+    purchase_in_use: "Freebuff says this session's purchase is in use by another instance — close the other Freebuff session or retry later.",
+    purchase_capacity: "Freebuff has no capacity left for this purchase right now — retry in a moment.",
+    purchase_claim_released: "Freebuff released this session claim because the purchase could not be secured — retry to claim again.",
   };
   // Gate statuses ride BOTH 200 (pre-join refusals) and 4xx — the backend
   // sends spend_limited/rate_limited as HTTP 429 with the gate in the body.
@@ -381,8 +505,7 @@ async function fetchSessionOffers(token, proxyOptions) {
   const response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      ...sessionHeaders(token),
       Accept: "application/json",
     },
   }, proxyOptions);
@@ -395,6 +518,8 @@ async function fetchSessionOffers(token, proxyOptions) {
     err.status = 401;
     throw err;
   }
+  const suspended = suspendedAccountError(data);
+  if (suspended) throw suspended;
   if (!response.ok) {
     const err = new Error(`Freebuff offer check failed: ${response.status} ${JSON.stringify(data).slice(0, 200)}`);
     err.status = response.status;
@@ -469,8 +594,7 @@ async function startRun(token, model, proxyOptions) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      ...sessionHeaders(token),
     },
     body: JSON.stringify({
       action: "START",
@@ -507,8 +631,7 @@ async function finishRun(token, runId, status, proxyOptions) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "codebuff-cli/0.0.138",
+        ...sessionHeaders(token),
       },
       body: JSON.stringify({ action: "FINISH", runId, status }),
       signal: AbortSignal.timeout(10_000),

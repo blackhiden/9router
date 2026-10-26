@@ -73,7 +73,7 @@ describe("getUsageForProvider(freebuff)", () => {
       resetAt: "2026-08-06T07:00:00.000Z",
       recurring: true,
       unlimited: false,
-      displayName: "DeepSeek V4.1 Flash",
+      displayName: "DeepSeek V4.1 Flash 10/17",
     });
     expect(usage.quotas["openai/gpt-6-luna"]).toMatchObject({
       used: 1,
@@ -86,6 +86,10 @@ describe("getUsageForProvider(freebuff)", () => {
     expect(url).toBe(SESSION_URL);
     expect(opts.method).toBe("GET");
     expect(opts.headers.Authorization).toBe("Bearer tok-1");
+    // Mirrors the CLI: unused models stay in the map, and the client family
+    // rides along so the server shapes the response for the CLI protocol.
+    expect(opts.headers["x-freebuff-include-unused-rate-limits"]).toBe("1");
+    expect(opts.headers["x-freebuff-client"]).toBe("cli");
   });
 
   it("folds the active session's own rateLimit into the shared map", async () => {
@@ -94,7 +98,7 @@ describe("getUsageForProvider(freebuff)", () => {
         status: "active",
         accessTier: "full",
         instanceId: "inst-1",
-        model: "meta/muse-spark-1.2-contributor",
+        model: "meta/muse-spark-1.3-contributor",
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
         rateLimit: {
           limit: 6,
@@ -112,10 +116,10 @@ describe("getUsageForProvider(freebuff)", () => {
     });
 
     expect(usage.plan).toBe("Freebuff");
-    expect(usage.quotas["meta/muse-spark-1.2-contributor"]).toMatchObject({
+    expect(usage.quotas["meta/muse-spark-1.3-contributor"]).toMatchObject({
       used: 2.4,
       total: 6,
-      displayName: "Muse Spark 1.2",
+      displayName: "Muse Spark 1.3",
     });
   });
 
@@ -150,7 +154,7 @@ describe("getUsageForProvider(freebuff)", () => {
       recurring: true,
       unlimited: false,
       price: 15,
-      displayName: "DeepSeek V4.1 Flash",
+      displayName: "DeepSeek V4.1 Flash 10/17",
     });
     expect(usage.quotas["z-ai/glm-5.3-flash"]).toMatchObject({
       used: 15,

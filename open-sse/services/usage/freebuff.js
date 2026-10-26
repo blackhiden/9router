@@ -36,6 +36,10 @@
 import REGISTRY from "../../providers/registry/index.js";
 import { U, fetchWithTimeout } from "./shared.js";
 
+// Must match the executor's client version — the backend refuses outdated
+// clients and the quota rows are shaped per protocol version.
+const FREEBUFF_CLI_VERSION = "0.2.34";
+
 // Friendly labels from the registry model list (mirrors the CLI picker).
 const freebuffRegistry = REGISTRY.find((r) => r.id === "freebuff") || {};
 const MODEL_LABELS = Object.fromEntries(
@@ -80,7 +84,13 @@ export async function getFreebuffUsage(accessToken, providerSpecificData, proxyO
         method: "GET",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          "User-Agent": "codebuff-cli/0.0.138",
+          "User-Agent": `codebuff-cli/${FREEBUFF_CLI_VERSION}`,
+          "x-freebuff-client": "cli",
+          "x-freebuff-client-version": FREEBUFF_CLI_VERSION,
+          // Mirrors the CLI: without this the server only returns models this
+          // account has actually used, so the card silently drops the rest of
+          // the picker's quota rings.
+          "x-freebuff-include-unused-rate-limits": "1",
           Accept: "application/json",
         },
       },

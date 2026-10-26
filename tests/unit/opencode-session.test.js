@@ -92,6 +92,32 @@ describe("OpenCode Free Session ID Format", () => {
     expect(translateSessionId(valid)).toBe(valid);
     expect(translateSessionId(`  ${valid}  `)).toBe(valid);
   });
+
+  // Upstream Zen decodes the 12-hex prefix as ~(Date.now() * 4096 + counter) and
+  // rejects a prefix built from anything but a recent timestamp with
+  // 403 FreeTierError, so the translated id must carry a real clock value.
+  it("encodes a recent timestamp, not hash bits", () => {
+    const MASK = 0xffffffffffffn;
+    // The 12 hex chars are the low 48 bits of ~(ms * 4096 + counter).
+    const decodedUnits = (id) => MASK - BigInt(`0x${id.slice(4, 16)}`);
+    const nowUnits = (BigInt(Date.now()) * 0x1000n) & MASK;
+
+    for (const translate of [translateSessionId, translateZenSessionId]) {
+      const id = translate("claude:fresh-mint-timestamp-check", "claude");
+      expect(id).toMatch(OPENCODE_SESSION_RE);
+      const diffMs = Number((decodedUnits(id) - nowUnits) / 0x1000n);
+      expect(Math.abs(diffMs)).toBeLessThan(60_000);
+    }
+  });
+
+  it("is stable for the same downstream session and differs across sessions", () => {
+    for (const translate of [translateSessionId, translateZenSessionId]) {
+      const a1 = translate("conv-stability-a", "claude");
+      expect(translate("conv-stability-a", "claude")).toBe(a1);
+      expect(translate("conv-stability-b", "claude")).not.toBe(a1);
+      expect(translate("conv-stability-a", "codex")).not.toBe(a1);
+    }
+  });
 });
 
 describe("OpenCode Free Executor Session Resolution", () => {

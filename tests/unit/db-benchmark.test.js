@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { describe, it, beforeAll, afterAll, vi } from "vitest";
 
 const N_ITEMS = 500;
@@ -24,32 +25,43 @@ async function bench(label, fn) {
   return dt;
 }
 
-beforeAll(async () => {
-  // SQLite setup
-  tempSqlite = fs.mkdtempSync(path.join(os.tmpdir(), "9router-bench-sqlite-"));
-  process.env.DATA_DIR = tempSqlite;
-  vi.resetModules();
-  sqliteDb = await import("@/lib/db/index.js");
-  await sqliteDb.initDb();
+// The benchmark measures SQLite against the legacy lowdb store. lowdb is not a
+// dependency of this repo (the fork stores everything in SQLite), so the
+// comparison can only run where it is installed — skip instead of failing
+// collection on every other machine.
+let hasLowdb = true;
+try {
+  createRequire(import.meta.url).resolve("lowdb");
+} catch {
+  hasLowdb = false;
+}
 
-  // Lowdb setup — direct lowdb usage (mimics legacy behavior)
-  tempLowdb = fs.mkdtempSync(path.join(os.tmpdir(), "9router-bench-lowdb-"));
-  const { Low } = await import("lowdb");
-  const { JSONFile } = await import("lowdb/node");
-  const dbFile = path.join(tempLowdb, "db.json");
-  fs.writeFileSync(dbFile, JSON.stringify({ providerConnections: [], usageHistory: [] }));
-  lowDb = new Low(new JSONFile(dbFile), { providerConnections: [], usageHistory: [] });
-  await lowDb.read();
-});
+describe.skipIf(!hasLowdb)("DB Benchmark — SQLite vs Lowdb", () => {
+  beforeAll(async () => {
+    // SQLite setup
+    tempSqlite = fs.mkdtempSync(path.join(os.tmpdir(), "9router-bench-sqlite-"));
+    process.env.DATA_DIR = tempSqlite;
+    vi.resetModules();
+    sqliteDb = await import("@/lib/db/index.js");
+    await sqliteDb.initDb();
 
-afterAll(() => {
-  if (tempSqlite) fs.rmSync(tempSqlite, { recursive: true, force: true });
-  if (tempLowdb) fs.rmSync(tempLowdb, { recursive: true, force: true });
-  if (originalDataDir === undefined) delete process.env.DATA_DIR;
-  else process.env.DATA_DIR = originalDataDir;
-});
+    // Lowdb setup — direct lowdb usage (mimics legacy behavior)
+    tempLowdb = fs.mkdtempSync(path.join(os.tmpdir(), "9router-bench-lowdb-"));
+    const { Low } = await import("lowdb");
+    const { JSONFile } = await import("lowdb/node");
+    const dbFile = path.join(tempLowdb, "db.json");
+    fs.writeFileSync(dbFile, JSON.stringify({ providerConnections: [], usageHistory: [] }));
+    lowDb = new Low(new JSONFile(dbFile), { providerConnections: [], usageHistory: [] });
+    await lowDb.read();
+  });
 
-describe("DB Benchmark — SQLite vs Lowdb", () => {
+  afterAll(() => {
+    if (tempSqlite) fs.rmSync(tempSqlite, { recursive: true, force: true });
+    if (tempLowdb) fs.rmSync(tempLowdb, { recursive: true, force: true });
+    if (originalDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = originalDataDir;
+  });
+
   it(`INSERT ${N_ITEMS} provider connections`, async () => {
     console.log(`\n[INSERT ${N_ITEMS}]`);
 

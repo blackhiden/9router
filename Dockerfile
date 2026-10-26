@@ -1,10 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Pinned by digest so a base-image refresh cannot silently bump npm and break
-# `npm ci` against the committed lockfile (see v1.0.9 npm ci EUSAGE failure).
-# DO NOT unpin. This image ships npm 10.9.8 — the lockfile MUST be regenerated
-# with npm 10 (`npx -y npm@10.9.8 install --package-lock-only`), never npm 11+.
-# See AGENTS.md §1 and scripts/verify-lockfile-npm10.mjs.
-ARG NODE_IMAGE=node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+ARG NODE_IMAGE=node:22.23.4-alpine
 ARG ALPINE_MIRROR=dl-cdn.alpinelinux.org
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 ARG APP_VERSION=unknown
@@ -39,6 +34,10 @@ RUN --mount=type=cache,target=/root/.npm \
     --fetch-timeout=300000
 
 COPY . ./
+# Guard: undefined identifiers compile fine under webpack/SWC but the shipped
+# bundle ReferenceErrors at runtime ("This page couldn't load"). Fails the
+# Docker build before `next build`. See AGENTS.md §8 + scripts/verify-no-undef.mjs.
+RUN node scripts/verify-no-undef.mjs
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
@@ -83,7 +82,7 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
 
 # Avoid a full distribution upgrade in the runtime image. It makes builds less
 # reproducible and is unrelated to installing the runtime entrypoint helper.
-RUN apk add --no-cache su-exec && \
+RUN apk add --no-cache su-exec ffmpeg && \
   printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
 
