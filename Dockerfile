@@ -44,6 +44,7 @@ RUN npm run build
 FROM ${NODE_IMAGE} AS runner
 ARG ALPINE_MIRROR
 ARG APP_VERSION
+ARG NPM_REGISTRY
 WORKDIR /app
 
 RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
@@ -85,6 +86,11 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
 RUN apk add --no-cache su-exec ffmpeg && \
   printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
+
+# Perch CLI provider: the executor spawns `perch acp` / `perch run`. Pinned to
+# the version verified against open-sse/executors/perch-cli.js.
+RUN --mount=type=cache,target=/root/.npm \
+  npm install -g --no-audit --no-fund --registry="${NPM_REGISTRY}" perchai-cli@2.4.120
 
 EXPOSE 20128
 

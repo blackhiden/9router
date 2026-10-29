@@ -145,6 +145,7 @@ import p146 from "./chatgpt-web.js";
 import p147 from "./veoaifree-web.js";
 import p151 from "./uc-web.js";
 import p152 from "./runcrate.js";
+import p152 from "./perch-cli.js";
 export default [
   p0,
   p1,
