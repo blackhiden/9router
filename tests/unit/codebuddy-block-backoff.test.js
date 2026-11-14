@@ -85,6 +85,8 @@ describe("CodeBuddy Intl block backoff (#5024)", () => {
     ]);
   });
 
+  // A request-scoped 4xx no longer ends the combo: every member is tried, and
+  // the first request-scoped failure is returned when none can serve it.
   it("advances past a malformed CodeBuddy request without cooling the account", async () => {
     const error = Response.json({ error: { message: "first message is not system prompt" } }, { status: 400 });
     const dispatch = vi.fn().mockResolvedValue(error);

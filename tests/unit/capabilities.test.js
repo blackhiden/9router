@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
+import * as capabilitiesModule from "../../open-sse/providers/capabilities.js";
 
 describe("getCapabilitiesForModel", () => {
 
@@ -19,6 +20,23 @@ describe("getCapabilitiesForModel", () => {
     });
     // the superseded text-only Flash id stays text-only
     expect(getCapabilitiesForModel("opencode-go", "deepseek-v4-flash").vision).toBe(false);
+    // The 1017 LoRA itself reads images (probed live on nli); only its `flex`
+    // servings drop them — probed 2026-11-11, an image_url part (data URI or
+    // https URL) 400s on the runcrate and nutaraline flex lanes. Text-only is
+    // what lets the vision capacity adapter route the image elsewhere.
+    expect(getCapabilitiesForModel("nli", "deepseek-v4.1-flash-1017").vision).toBe(true);
+    for (const flexId of [
+      "deepseek-v4.1-flash-1017:flex",
+      "deepseek-v4.1-flash-1017-flex",
+      "deepseek-v4.1-flash-1017-flex:high",
+    ]) {
+      expect(getCapabilitiesForModel(undefined, flexId).vision).toBe(false);
+      expect(getCapabilitiesForModel("nli", flexId).vision).toBe(false);
+    }
+    // Same lane 400s on a full inline data URI in TEXT (probed: 3.5 KB jpeg
+    // data URI in a tool result), so the payload is dropped before sending.
+    expect(getCapabilitiesForModel(undefined, "deepseek-v4.1-flash-1017:flex").dropInlineMediaPayloads).toBe(true);
+    expect(getCapabilitiesForModel("anthropic", "claude-sonnet-5.5").dropInlineMediaPayloads).toBe(false);
   });
   const claudeSonnet5Expected = {
     contextWindow: 1000000,
@@ -341,5 +359,43 @@ describe("OpenCode Free ids newer than the capability tables", () => {
       contextWindow: 1048576,
       maxOutput: 131072,
     });
+  });
+});
+
+describe("getCapabilitiesForModel custom overrides", () => {
+  const install = (map) => {
+    capabilitiesModule.setCustomCapsSource({
+      getCaps(provider, model) {
+        return map[`${String(provider || "").toLowerCase()}|${String(model || "").toLowerCase()}`] || null;
+      },
+    });
+  };
+
+  it("keeps an explicit false from a dashboard edit when the table says true", () => {
+    const model = "deepseek-v4.1-flash";
+    expect(getCapabilitiesForModel("opencode-go", model).vision).toBe(true);
+    install({ [`opencode-go|${model}`]: { vision: false, reasoning: false } });
+    try {
+      expect(getCapabilitiesForModel("opencode-go", model)).toMatchObject({ vision: false, reasoning: false });
+      // A provider-scoped edit leaves the same id on other providers alone.
+      expect(getCapabilitiesForModel("openrouter", model).vision).toBe(true);
+    } finally {
+      capabilitiesModule.setCustomCapsSource(null);
+    }
+    expect(getCapabilitiesForModel("opencode-go", model).vision).toBe(true);
+  });
+
+  it("lets a dashboard edit grant vision a pattern denies", () => {
+    const model = "deepseek-v4.1-flash-1017:flex";
+    const before = getCapabilitiesForModel("", model).vision;
+    install({ [`|${model}`]: { vision: true } });
+    try {
+      expect(getCapabilitiesForModel("", model).vision).toBe(true);
+      // Overlays merge, so the pattern's limits survive the edit.
+      expect(getCapabilitiesForModel("", model).contextWindow).toBeGreaterThan(0);
+    } finally {
+      capabilitiesModule.setCustomCapsSource(null);
+    }
+    expect(getCapabilitiesForModel("", model).vision).toBe(before);
   });
 });

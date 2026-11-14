@@ -64,6 +64,11 @@ export const DEFAULT_CAPABILITIES = {
   // limits (tokens)
   contextWindow: 200000,
   maxOutput: 64000,
+  // Some upstream lanes reject a request whose TEXT contains a full inline
+  // data URI (probed: 3.5 KB jpeg data URI inside a tool result -> HTTP 400),
+  // even when the same bytes are accepted as an image block. When true, the
+  // text payload is replaced by a size-annotated placeholder before sending.
+  dropInlineMediaPayloads: false,
 };
 
 // User-added model metadata can carry dashboard service kinds instead of the
@@ -618,7 +623,16 @@ export const PATTERN_CAPABILITIES = [
   // v4.1+ has real image input (probed live on Alibaba MaaS: correct color
   // read from a PNG). v4-pro / v4-flash-0731 accept image blocks but ignore
   // them (answered "Unknown"), so vision stays scoped to v4.* dotted releases.
-  { pattern: "*deepseek-v4.*",  caps: { vision: true, reasoning: true, thinkingFormat: "deepseek", thinkingEffortSupported: true, contextWindow: 1000000, maxOutput: 128000 } },
+  // The `:flex` siblings of a vision model are LoRA servings on lanes that drop
+  // images: probed 2026-11-11, an `image_url` part — base64 data URI or https
+  // URL — answers 400 upstream_invalid_request on both the runcrate and the
+  // nutaraline flex lane, while nli/deepseek-v4.1-flash-1017 (no flex) reads
+  // images fine. "1017*flex" covers both spellings (`:flex` on a connection
+  // model, `-flex` on the alias the gateway publishes). Declaring the flex id
+  // text-only strips the image before dispatch and lets the vision capacity
+  // adapter route it to a model that can read it.
+  { pattern: "*1017*flex*",     caps: { vision: false, reasoning: true, thinkingFormat: "deepseek", thinkingEffortSupported: true, contextWindow: 1000000, maxOutput: 128000, dropInlineMediaPayloads: true } },
+  { pattern: "*deepseek-v4.*",  caps: { vision: true, reasoning: true, thinkingFormat: "deepseek", thinkingEffortSupported: true, contextWindow: 1000000, maxOutput: 128000, dropInlineMediaPayloads: true } },
   { pattern: "*deepseek-v4*",   caps: { reasoning: true, thinkingFormat: "deepseek", thinkingEffortSupported: true, contextWindow: 1000000, maxOutput: 384000 } },
   { pattern: "*reasoner*",      caps: { reasoning: true, thinkingFormat: "deepseek", thinkingCanDisable: false, contextWindow: 128000 } },
   { pattern: "*deepseek-r*",    caps: { reasoning: true, thinkingFormat: "deepseek", thinkingCanDisable: false, contextWindow: 128000 } },
@@ -763,6 +777,27 @@ function getCatalogSource() {
   return globalThis.__9rCatalogSource || null;
 }
 
+// Dashboard-edited capability overrides for individual models (the Vision /
+// Reasoning / Speech-to-text toggles on a provider page). Same install-and-slot
+// shape as the catalog source: the server builds a lookup from the custom-model
+// table at startup and after every save, and every chunk copy reads the
+// globalThis slot so a write in the API route is visible to request handling.
+let customCapsSource = null;
+
+/**
+ * Install the custom-model capability override reader (server only).
+ * @param {{ getCaps: (provider: string, model: string) => object|null } | null} source
+ */
+export function setCustomCapsSource(source) {
+  customCapsSource = source;
+  if (typeof globalThis !== "undefined") globalThis.__9rCustomCapsSource = source;
+}
+
+function getCustomCapsSource() {
+  if (typeof globalThis === "undefined") return customCapsSource;
+  return globalThis.__9rCustomCapsSource || null;
+}
+
 // Apply the synced catalog + name heuristic on top of a table-resolved result.
 // Strictly additive: a capability already true stays true, and a false one only
 // flips when an outside source positively declares support.
@@ -828,6 +863,17 @@ function isCommandCodeTextOnly(model) {
   return false;
 }
 export function getCapabilitiesForModel(provider, model) {
+  const resolved = resolveModelCapabilities(provider, model);
+  const source = getCustomCapsSource();
+  if (!source || !model) return resolved;
+  const override = source.getCaps?.(provider, model);
+  if (!override) return resolved;
+  // Explicit dashboard values win over the table, including `false`: an operator
+  // marking a model text-only must beat a pattern that guesses vision.
+  return { ...resolved, ...override };
+}
+
+function resolveModelCapabilities(provider, model) {
   if (!model) return { ...DEFAULT_CAPABILITIES };
 
   // Canonical exact lookup strips vendor prefix: "anthropic/claude-opus-4.7" -> "claude-opus-4.7".

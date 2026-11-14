@@ -15,6 +15,7 @@ import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 import ModelRow from "./ModelRow";
+import EditModelCapsModal from "./EditModelCapsModal";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
 import ConnectionRow from "./ConnectionRow";
@@ -69,6 +70,7 @@ export default function ProviderDetailPage() {
   const [modelsTestError, setModelsTestError] = useState("");
   const [testingModelIds, setTestingModelIds] = useState(() => new Set());
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
+  const [editingCaps, setEditingCaps] = useState(null); // { id } | null
   const [selectedConnectionIds, setSelectedConnectionIds] = useState([]);
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
@@ -656,6 +658,37 @@ export default function ProviderDetailPage() {
       }
     } catch (error) {
       console.log("Error deleting custom model:", error);
+    }
+  };
+
+  // Capability edits reuse the custom-model row: caps live there, and the API
+  // refreshes the runtime override lookup after the write. A type change (STT
+  // toggle) moves the record between the "llm" and "stt" keys, so delete first.
+  const handleSaveCustomModel = async (modelId, { type = "llm", previousType = "llm", caps, transport } = {}) => {
+    try {
+      // Write the new type first: a failed delete leaves a duplicate row (the
+      // loader prefers the llm one), while deleting first would lose caps, name
+      // and transport if the POST then failed.
+      const existing = customModels.find((m) => m?.id === modelId && m.providerAlias === providerStorageAlias);
+      const res = await fetch("/api/models/custom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerAlias: providerStorageAlias, id: modelId, type, name: existing?.name, ...(caps ? { caps } : {}), ...(transport ? { transport } : {}) }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Failed to save model capabilities");
+        return;
+      }
+      if (previousType !== type) {
+        const params = new URLSearchParams({ providerAlias: providerStorageAlias, id: modelId, type: previousType });
+        const del = await fetch(`/api/models/custom?${params}`, { method: "DELETE" });
+        if (!del.ok) alert("Saved, but the previous type could not be removed");
+      }
+      await fetchCustomModels();
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("customModelChanged"));
+    } catch (error) {
+      console.log("Error saving model capabilities:", error);
     }
   };
 
@@ -1264,6 +1297,8 @@ export default function ProviderDetailPage() {
           onDeleteAlias={handleDeleteAlias}
           onAddCustomModel={(modelId) => handleAddCustomModel(modelId, "llm", providerStorageAlias)}
           onDeleteCustomModel={(modelId) => handleDeleteCustomModel(modelId, "llm", providerStorageAlias)}
+          onSaveCustomModel={handleSaveCustomModel}
+          resolveCaps={getCaps}
           connections={connections}
           isAnthropic={isAnthropicCompatible}
         />
@@ -1310,6 +1345,7 @@ export default function ProviderDetailPage() {
             isTesting={testingModelIds.has(model.id)}
             isCustom
             isFree={false}
+            onEditCaps={() => setEditingCaps({ id: model.id })}
             caps={getCaps(`${providerId}/${model.id}`)}
             thinkingSuffix={resolveThinkingSuffix(model.id)}
           />
@@ -1336,6 +1372,7 @@ export default function ProviderDetailPage() {
               isTesting={testingModelIds.has(model.id)}
               isFree={model.isFree}
               onDisable={() => handleDisableModel(model.id)}
+              onEditCaps={() => setEditingCaps({ id: model.id })}
               caps={getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
             />
@@ -1723,7 +1760,7 @@ export default function ProviderDetailPage() {
               <div className="flex flex-wrap items-center gap-2 border-t border-black/[0.03] pt-2 dark:border-white/[0.03]">
                 <div>
                   <span className="text-xs text-text-muted font-medium">Strict Model Assignment</span>
-                  <p className="text-[10px] text-text-muted">Only assigned accounts can serve each model for this provider.</p>
+                  <p className="text-[10px] text-text-muted">Only assigned accounts can serve each model for this provider. Unassigned accounts serve none; pick All models to let an account serve every model.</p>
                 </div>
                 <Toggle checked={strictModelAssignment} onChange={handleStrictAssignmentToggle} />
               </div>
@@ -2070,6 +2107,17 @@ export default function ProviderDetailPage() {
           isAnthropic={isAnthropicCompatible}
         />
       )}
+      <EditModelCapsModal
+        isOpen={!!editingCaps}
+        record={editingCaps ? {
+          ...(customModels.find((m) => m?.id === editingCaps.id && m.providerAlias === providerStorageAlias) || {}),
+          id: editingCaps.id,
+        } : null}
+        fallbackCaps={editingCaps ? getCaps(`${providerId}/${editingCaps.id}`) : null}
+        providerDisplayAlias={providerDisplayAlias}
+        onSave={(payload) => handleSaveCustomModel(editingCaps.id, payload)}
+        onClose={() => setEditingCaps(null)}
+      />
       {!isCompatible && (
         <AddCustomModelModal
           isOpen={showAddCustomModel}
