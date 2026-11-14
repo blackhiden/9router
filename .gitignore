@@ -102,3 +102,5 @@ start-dev-silent.cjs
 debug.log
 .agents
 .scratch/
+merge-mipb.md
+merge-upstream.md

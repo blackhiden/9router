@@ -28,11 +28,19 @@ const SPECIALIZED = new Set([
   "antigravity", "azure", "gemini-cli", "github", "iflow", "qoder", "kiro",
   "codex", "cursor", "vertex", "vertex-partner", "opencode",
   "opencode-go", "grok-web", "perplexity-web", "ollama-local", "commandcode",
-  "xiaomi-tokenplan", "mimo-free", "perch-cli",
+  "xiaomi-tokenplan", "mimo-free",
 ]);
 
-// Per-process / per-request values: kimi's random device name, minimax's session UUID.
-const VOLATILE_HEADERS = new Set(["x-msh-device-name", "x-mavis-session-id"]);
+// Per-process / per-request values: kimi's random device name, minimax's session UUID,
+// and CodeBuddy's per-request/conversation UUIDs.
+const VOLATILE_HEADERS = new Set([
+  "x-msh-device-name",
+  "x-mavis-session-id",
+  "x-request-id",
+  "x-conversation-id",
+  "x-conversation-request-id",
+  "x-conversation-message-id",
+]);
 
 // Machine-derived values: OS/arch (kimi device model) and local timezone
 // (minimax session offset). Normalised so the snapshot is portable.

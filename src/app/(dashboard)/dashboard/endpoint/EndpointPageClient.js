@@ -28,6 +28,7 @@ export default function APIPageClient({ machineId }) {
   const [confirmState, setConfirmState] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
+  const [combosOnly, setCombosOnly] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
   const [hasPassword, setHasPassword] = useState(true);
  const [tunnelDashboardAccess, setTunnelDashboardAccess] = useState(false);
@@ -202,6 +203,7 @@ export default function APIPageClient({ machineId }) {
       ]);
       if (settingsData) {
         setRequireApiKey(settingsData.requireApiKey || false);
+        setCombosOnly(settingsData.combosOnly === true);
         setRequireLogin(settingsData.requireLogin !== false);
         setHasPassword(settingsData.hasPassword || false);
         setTunnelDashboardAccess(settingsData.tunnelDashboardAccess || false);
@@ -243,6 +245,15 @@ export default function APIPageClient({ machineId }) {
       if (updated) setRequireApiKey(value);
     } catch (error) {
       console.log("Error updating requireApiKey:", error);
+    }
+  };
+
+  const handleCombosOnly = async (value) => {
+    try {
+      const updated = await useSettingsStore.getState().patchSettings({ combosOnly: value });
+      if (updated) setCombosOnly(value);
+    } catch (error) {
+      console.log("Error updating combosOnly:", error);
     }
   };
 
@@ -675,8 +686,15 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  // Save a key's access (restricted flag + allow list).
-  const handleUpdateKeyAccess = async (id, access) => {
+  // Save a key's access (restricted flag + allow list). Update the row
+  // optimistically so a burst of removals / "select all" never computes from a
+  // stale list; a sequence counter keeps an older response from overwriting a
+  // newer edit. PUTs for one key are chained: the route writes the whole access
+  // object, so two overlapping requests could otherwise commit out of order and
+  // leave the DB on an older list than the UI.
+  const accessSaveSeq = useRef(new Map());
+  const accessSaveChain = useRef(new Map());
+  const persistKeyAccess = async (id, access, seq) => {
     try {
       const res = await fetch(`/api/keys/${id}`, {
         method: "PUT",
@@ -685,13 +703,32 @@ export default function APIPageClient({ machineId }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.key) {
-        setKeys(prev => prev.map(k => k.id === id ? { ...k, access: data.key.access } : k));
+        if (accessSaveSeq.current.get(id) === seq) {
+          setKeys(prev => prev.map(k => k.id === id ? { ...k, access: data.key.access } : k));
+        }
       } else {
         console.log("Error updating key access:", data.error || res.status);
+        if (accessSaveSeq.current.get(id) === seq) {
+          const keysRes = await fetch("/api/keys").catch(() => null);
+          if (keysRes?.ok) setKeys((await keysRes.json()).keys || []);
+        }
       }
     } catch (error) {
       console.log("Error updating key access:", error);
+      if (accessSaveSeq.current.get(id) === seq) {
+        const keysRes = await fetch("/api/keys").catch(() => null);
+        if (keysRes?.ok) setKeys((await keysRes.json()).keys || []);
+      }
     }
+  };
+
+  const handleUpdateKeyAccess = (id, access) => {
+    const seq = (accessSaveSeq.current.get(id) || 0) + 1;
+    accessSaveSeq.current.set(id, seq);
+    setKeys(prev => prev.map(k => k.id === id ? { ...k, access } : k));
+    const save = () => persistKeyAccess(id, access, seq);
+    const prev = accessSaveChain.current.get(id) || Promise.resolve();
+    accessSaveChain.current.set(id, prev.then(save, save));
   };
 
   const maskKey = (fullKey) => {
@@ -1005,6 +1042,19 @@ export default function APIPageClient({ machineId }) {
             <SecurityWarning message="Endpoint is exposed without an API key." />
           </div>
         )}
+
+        <div className="flex items-center justify-between pb-4 mb-4 border-b border-border">
+          <div>
+            <p className="font-medium">Combos only</p>
+            <p className="text-sm text-text-muted">
+              Expose only combos in /v1/models and reject direct model calls
+            </p>
+          </div>
+          <Toggle
+            checked={combosOnly}
+            onChange={() => handleCombosOnly(!combosOnly)}
+          />
+        </div>
 
         {keys.length === 0 ? (
           <div className="text-center py-12">

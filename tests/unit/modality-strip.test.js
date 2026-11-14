@@ -100,6 +100,97 @@ describe("stripUnsupportedModalities", () => {
     expect(body.input[0].content.some((b) => b.type === "input_text" && /image omitted/.test(b.text))).toBe(true);
   });
 
+  it("openai: redacts data:image token inside string tool content, keeps code", () => {
+    const code = "export interface ScreenshotAttachment {\n  /** `data:image/jpeg;base64,...` */\n  dataUrl: string;\n}";
+    const body = { messages: [{ role: "tool", content: code }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI, NO_VISION);
+    expect(body.messages[0].content).not.toContain("data:image/");
+    expect(body.messages[0].content).toContain("ScreenshotAttachment");
+    expect(body.messages[0].content).toContain("dataUrl: string;");
+    expect(body.messages[0].content).toMatch(/image omitted/);
+  });
+
+  it("openai: uses current-turn placeholder on last message, neutral earlier", () => {
+    const last = { messages: [{ role: "user", content: "see data:image/png;base64,..." }] };
+    stripUnsupportedModalities(last, FORMATS.OPENAI, NO_VISION);
+    expect(last.messages[0].content).toMatch(/model has no vision support/);
+    const prev = { messages: [
+      { role: "user", content: "see data:image/png;base64,..." },
+      { role: "assistant", content: "ok" },
+    ] };
+    stripUnsupportedModalities(prev, FORMATS.OPENAI, NO_VISION);
+    expect(prev.messages[0].content).toMatch(/Previous image omitted/);
+  });
+
+  it("openai: redacts mention even when vision:true, keeps real payload", () => {
+    const mention = { messages: [{ role: "tool", content: "x `data:image/jpeg;base64,...` y" }] };
+    stripUnsupportedModalities(mention, FORMATS.OPENAI, ALL);
+    expect(mention.messages[0].content).not.toContain("data:image/");
+    expect(mention.messages[0].content).toBe("x `[inline image data URI omitted from text]` y");
+    expect(mention.messages[0].content).not.toMatch(/model has no vision support/);
+    const real = `data:image/png;base64,${"iVBORw0KGgoAAAANSUhEUg".repeat(10)}`;
+    const intact = { messages: [{ role: "user", content: `see ${real} here` }] };
+    stripUnsupportedModalities(intact, FORMATS.OPENAI, ALL);
+    expect(intact.messages[0].content).toContain(real);
+  });
+
+  it("openai: mentions of audio/pdf use neutral text when the model supports them", () => {
+    const body = { messages: [{ role: "tool", content: "a data:audio/mp3;base64,... b data:application/pdf;base64,... c" }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI, ALL);
+    expect(body.messages[0].content).toBe(
+      "a [inline audio data URI omitted from text] b [inline PDF data URI omitted from text] c",
+    );
+    expect(body.messages[0].content).not.toMatch(/no audio support|no document support/);
+  });
+
+  it("openai: redacts a bare mime mention with no payload", () => {
+    const body = { messages: [{ role: "tool", content: 'if (mime === "data:image/png") return;' }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI, NO_VISION);
+    expect(body.messages[0].content).not.toContain("data:image/");
+    expect(body.messages[0].content).toContain('if (mime === "');
+    expect(body.messages[0].content).toContain('") return;');
+    expect(body.messages[0].content).toMatch(/image omitted/);
+  });
+
+  it("openai: redacts a bare data:image/ prefix and keeps surrounding code", () => {
+    const body = { messages: [{ role: "tool", content: 'if (m.content.includes("data:image/")) required.add("vision");' }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI, ALL);
+    expect(body.messages[0].content).not.toContain("data:image/");
+    expect(body.messages[0].content).toContain('required.add("vision");');
+    expect(body.messages[0].content).not.toMatch(/model has no vision support/);
+  });
+
+  it("openai: drops a full inline data URI only when the lane rejects them", () => {
+    const payload = "iVBORw0KGgoAAAANSUhEUg".repeat(10);
+    const text = `upload payload => data:image/jpeg;base64,${payload}; done`;
+    const strict = { messages: [{ role: "tool", content: text }] };
+    stripUnsupportedModalities(strict, FORMATS.OPENAI, { ...ALL, dropInlineMediaPayloads: true });
+    expect(strict.messages[0].content).not.toContain("data:image/");
+    expect(strict.messages[0].content).not.toContain(payload);
+    expect(strict.messages[0].content).toMatch(/inline image data URI omitted: 220 base64 chars/);
+    expect(strict.messages[0].content).toContain("upload payload =>");
+    expect(strict.messages[0].content).toContain("; done");
+  });
+
+  it("openai: keeps image blocks when inline payloads are dropped", () => {
+    const payload = "iVBORw0KGgoAAAANSUhEUg".repeat(10);
+    const body = { messages: [{ role: "user", content: [
+      { type: "text", text: `see data:image/png;base64,${payload}` },
+      { type: "image_url", image_url: { url: `data:image/png;base64,${payload}` } },
+    ] }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI, { ...ALL, dropInlineMediaPayloads: true });
+    expect(body.messages[0].content[0].text).not.toContain("data:image/");
+    expect(body.messages[0].content[1].image_url.url).toContain(payload);
+  });
+
+  it("openai: redacts embedded audio/pdf URIs by capability", () => {
+    const body = { messages: [{ role: "user", content: "a data:audio/mp3;base64,ZZZ b data:application/pdf;base64,YYY" }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI, { vision: true, audioInput: false, pdf: false });
+    expect(body.messages[0].content).not.toContain("data:audio/");
+    expect(body.messages[0].content).not.toContain("data:application/pdf");
+  });
+
+
   it("handles missing/empty body safely", () => {
     expect(stripUnsupportedModalities(null, FORMATS.OPENAI, NO_VISION)).toBe(false);
     expect(stripUnsupportedModalities({}, FORMATS.OPENAI, null)).toBe(false);
