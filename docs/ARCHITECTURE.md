@@ -546,7 +546,7 @@ Environment variables actively used by code:
 - Security hashing: `API_KEY_SECRET`, `MACHINE_ID_SALT`
 - Logging: `ENABLE_REQUEST_LOGS`
 - Sync/cloud URLing: `NEXT_PUBLIC_BASE_URL`, `NEXT_PUBLIC_CLOUD_URL`
-- Outbound proxy: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase variants
+- Outbound proxy & TLS: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase variants; `NINEROUTER_TLS_ECDH_CURVE` (optional ECDH curve override in `open-sse/utils/proxyFetch.js`, defaults to `X25519:prime256v1:secp384r1`)
 - Platform/runtime helpers (not app-specific config): `APPDATA`, `NODE_ENV`, `PORT`, `HOSTNAME`
 
 ## Known Architectural Notes
@@ -557,6 +557,7 @@ Environment variables actively used by code:
 4. Cloud sync runtime prioritizes server-side `BASE_URL`/`CLOUD_URL`; `NEXT_PUBLIC_BASE_URL`/`NEXT_PUBLIC_CLOUD_URL` remain supported for compatibility/UI.
 5. Cloud behavior depends on correct `NEXT_PUBLIC_BASE_URL` and cloud endpoint reachability.
 6. The OpenCode free-tier fingerprint in `open-sse/utils/opencodeFingerprint.js` rewrites `tools` before the upstream call: a caller tool that already uses a fingerprint name (`read`/`shell`) adopts OpenCode's definition when its parameters can carry them, otherwise it is aliased and restored on the response side. The definitions are a frozen capture of the OpenCode CLI, so `shell`'s description embeds the capture platform (`Linux`/`bash`) and is rewritten for clients on any other platform.
+7. Kiro runtime/streaming identity headers (`User-Agent` / `X-Amz-User-Agent` with `KiroIDE-1.4.154-<sha256>`) are centralized in `open-sse/shared/kiroIdentity.js` (`buildKiroIdentityHeaders`) and applied across Kiro inference, live model catalog, usage probes, profile ARN lookups, and API-key validation without leaking raw credentials.
 
 ## Operational Verification Checklist
 
